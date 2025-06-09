@@ -1,0 +1,21 @@
+from Compiler.library import sint, print_ln, for_range
+from Compiler.types import Array
+
+bidder_no = int(program.args[1])  # Read bidder_no as the first parameter
+round_no = sint(int(program.args[2]))  # Read round_no as the second parameter
+
+# === Get readiness flag from each player ===
+ready_flags = Array(bidder_no, sint)
+for i in range(bidder_no):
+    ready_flags[i] = sint.get_input_from(i)
+
+# === Check if each ready_flag equals round_no ===
+all_ready = sint(1)  # Initialize to true (1)
+@for_range(bidder_no)
+def _(i):
+    global all_ready
+    is_equal = (ready_flags[i] == round_no)
+    all_ready = all_ready * is_equal  # Only stays 1 if all are equal
+
+# === Reveal result ===
+print_ln("All players ready: %s", all_ready.reveal())

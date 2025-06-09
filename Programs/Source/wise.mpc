@@ -1,0 +1,171 @@
+from Compiler import types, library
+from Compiler.library import for_range, sint, print_ln
+from Compiler.types import Array
+import util
+
+# === Configuration ===
+n_bits = 64
+n_loops = 1
+value_type = sint
+
+program.set_bit_length(n_bits)
+program.set_security(40)
+
+max_bidder = 100
+max_round_no = 5
+bidder_no = int(program.args[1])
+round_no = int(program.args[2])
+#bidder_no = 3
+get_ready = sint.get_input_from(0)
+
+# bid_rank_standings = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+bid_rank_standings = [i for i in range(1, 101)]
+bid_rank_points = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10]
+
+@for_range(n_loops)
+def f(_):
+    # === Data Structures ===
+    # A bid: (id, bid_amount, bid_rank_points, bid_rank_standings, bonus_amount, total_points)
+    Bid = types.getNamedTupleType('id', 'bid_amount', 'bid_rank_points', 'bid_rank_standings', 'bonus_amount', 'total_points')
+
+    # Secure arrays
+    total_bid_points = Array(max_bidder, sint)
+    bids = Array(max_bidder, sint)
+    bonus_points = Array(max_bidder, sint)
+    sorted_final_total = Bid.get_array(max_bidder, sint)
+
+    winner_id = 0
+    winner_total_points = 0
+    winner_bid_amount = 0
+
+    # === Secure insertion sort helper ===
+    def insertion_sort(arr, n, key=lambda x: x):
+        @for_range(1, n)
+        def _(i):
+            @for_range(i, 0, -1)
+            def _(j):
+                a = key(arr[j-1])
+                b = key(arr[j])
+                
+                swap = a < b
+                arr[j-1], arr[j] = util.cond_swap(swap, arr[j-1], arr[j])
+
+        return arr
+
+    # === Initialize total points and bids ===
+    @for_range(bidder_no)
+    def init_arrays(i):
+        total_bid_points[i] = sint(0)
+        bids[i] = sint(0)
+        bonus_points[i] = sint(0)
+    
+    @for_range(1, bidder_no)
+    def delete_constants(i):
+        init_ready = sint.get_input_from(i)
+
+    # === Run sealed bids for multiple rounds ===
+    @for_range(round_no)
+    def round_loop(r):
+        bids = Bid.get_array(max_bidder, sint)
+        is_correct = sint(1)
+        is_wrong = sint(-1)
+        is_no_answer = sint(0)
+
+        @if_(r == round_no - 1)
+        def writefile():
+            r_sint = Array(1,sint)
+            r_sint[0] = sint((r + 1) * - 1)
+            r_sint.write_to_file()
+
+        @for_range(bidder_no)
+        def assign_values(i):
+            amt = sint.get_input_from(i)
+            bids[i] = Bid(i, amt, sint(0), sint(0), sint(0), sint(0))
+
+            # Calculate bonus points
+            bonus = sint.get_input_from(i)
+
+            bonus_points[i] = bonus_points[i] + (is_correct == bonus).if_else(sint(10), sint(0))
+            bonus_points[i] = bonus_points[i] + (is_wrong == bonus).if_else(sint(-10), sint(0))
+            bonus_points[i] = bonus_points[i] + (is_no_answer == bonus).if_else(sint(0), sint(0))
+            bids[i] = Bid(i, amt, sint(0), sint(0), bonus_points[i], sint(0))
+
+        sorted_bids = insertion_sort(bids, bidder_no, key=lambda x: x.bid_amount)
+
+        @for_range(bidder_no)
+        def set_rankings(i):
+            # Secure selection of points from bid_rank_points
+            bid_points = sint(0)
+            for j in range(len(bid_rank_points)):
+                bid_points = bid_points + (i == j).if_else(sint(bid_rank_points[j]), sint(0))
+            
+            # Secure selection of ranks from bid_rank_standings
+            bid_standings = sint(0)
+            for j in range(len(bid_rank_standings)):
+                bid_standings = bid_standings + (i == j).if_else(sint(bid_rank_standings[j]), sint(0))
+
+            bids[i] = Bid(sorted_bids[i].id, sorted_bids[i].bid_amount, bid_points, bid_standings, sorted_bids[i].bonus_amount, sint(0))
+
+        @for_range(bidder_no)
+        def set_total_points(i):
+            total_bid_points[i] = bids[i].bid_rank_points + bids[i].bonus_amount
+
+        # === Rank bidders based on total points ===
+
+        # Build final bids array
+        final_bids = Bid.get_array(max_bidder, sint)
+
+        @for_range(bidder_no)
+        def build_final_bids(i):
+            final_bids[i] = Bid(bids[i].id, bids[i].bid_amount, bids[i].bid_rank_points, bids[i].bid_rank_standings, bids[i].bonus_amount, total_bid_points[i])
+        
+        # Sort bidders descending by total points
+        sorted_final_total = insertion_sort(final_bids, bidder_no, key=lambda x: x.total_points)
+ 
+        @for_range(bidder_no)
+        def reveal(i):
+            @if_(r == round_no - 1)
+            def writefile():
+                r_sint = Array(3,sint)
+
+                r_sint[0] = sorted_final_total[i].id
+                r_sint[1] = sorted_final_total[i].bid_rank_standings
+                r_sint[2] = sorted_final_total[i].bonus_amount
+                                
+                r_sint.write_to_file()
+
+        # Save the winner
+        @if_(r == max_round_no - 1)
+        def save_winner():
+            nonlocal winner_id, winner_total_points
+
+            # Initialize winner as the first bidder
+            winner_id = sorted_final_total[0].id.reveal()
+            winner_total_points = sorted_final_total[0].total_points.reveal()
+            winner_bid_amount = sorted_final_total[0].bid_amount.reveal()
+ 
+            @for_range(1, bidder_no)
+            def find_best(i):
+                nonlocal winner_id, winner_total_points, winner_bid_amount 
+                current_points = sorted_final_total[i].total_points.reveal()
+                current_bid = sorted_final_total[i].bid_amount.reveal()
+                current_id = sorted_final_total[i].id.reveal()
+ 
+                # If points are equal, but higher bid amount
+                is_same_points_higher_bid = (current_points == winner_total_points) & (current_bid > winner_bid_amount)
+ 
+                # If better by points or by higher bid when points are equal
+                update = is_same_points_higher_bid
+ 
+                winner_id = update.if_else(current_id, winner_id)
+                winner_total_points = update.if_else(current_points, winner_total_points)
+                winner_bid_amount = update.if_else(current_bid, winner_bid_amount)
+
+            # === Reveal round points ===
+            print_ln("\n======= Auction Winner =======\n")
+        
+            print_ln("Winner ID: %s", winner_id)
+            print_ln("Winner Total Points: %s", winner_total_points)
+            print_ln()
+            
+            print_ln("============================")
